@@ -27,6 +27,7 @@ typedef struct{
 
 bool flib_read(const char *path, flib_c *fc);
 fsize_t flib_size(const char *path);
+bool flib_exists(const char *path);
 bool flib_isfile(const char *path);
 bool flib_isdir(const char *path);
 #endif // _FLIB_H
@@ -34,6 +35,7 @@ bool flib_isdir(const char *path);
 #ifdef FLIB_IMPLEMENTATION
 bool flib_read(const char *path, flib_c *fc)
 {
+    if (fc == NULL) return false;
     FILE *file = fopen(path, "r");
     if (file == NULL){
         flib_error("Could not open file '%s'!", path);
@@ -71,18 +73,14 @@ bool flib_exists(const char *path)
 bool flib_isfile(const char *path)
 {
     struct stat attr;
-    if (stat(path, &attr) == -1){
-        return false;
-    }
+    if (stat(path, &attr) == -1) return false;
     return S_ISREG(attr.st_mode);
 }
 
 bool flib_isdir(const char *path)
 {
     struct stat attr;
-    if (stat(path, &attr) == -1){
-        return false;
-    }
+    if (stat(path, &attr) == -1) return false;
     return S_ISDIR(attr.st_mode);
 }
 #endif // FLIB_IMPLEMENTATION
