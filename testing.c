@@ -6,12 +6,18 @@
 int main(int argc, char **argv)
 {
     if (argc < 2){
-        fprintf(stderr, "[ERROR] No input file provided!\n");
+        eprintfn("No input file provided!");
         return 1;
     }
     const char *path = argv[1];
-    flib_c content;
-    if (!flib_read(path, &content)) return 1;
-    printf("%s: '%s' (%llu bytes)\n", path, content.buffer, content.size);
+    DIR *dir = opendir(path);
+    if (dir == NULL){
+        eprintfn("Could not find directory '%s'!", path);
+        return 1;
+    }
+    flib_entry entry;
+    while (flib_get_entry(dir, path, &entry)){
+        flib_print_entry(entry);
+    }
     return 0;
 }
