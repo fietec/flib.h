@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <assert.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -62,9 +63,9 @@ bool flib_exists(const char *path);
 bool flib_isfile(const char *path);
 bool flib_isdir(const char *path);
 
-bool create_dir(const char *path);
-int copy_file(const char *from, const char *to);
-int copy_dir_rec(const char *src, const char *dest);
+bool flib_create_dir(const char *path);
+int flib_copy_file(const char *from, const char *to);
+int flib_copy_dir(const char *src, const char *dest);
 
 bool flib_get_entry(DIR *dir, const char *path, flib_entry *entry);
 fsize_t flib_dir_size(DIR *dir, const char *path);
@@ -97,7 +98,7 @@ bool flib_read(const char *path, flib_cont *fc)
     return true;
 }
 
-bool create_dir(const char *path)
+bool flib_create_dir(const char *path)
 {
     if (mkdir(path) == -1){
         eprintfn("Could not create directory '%s': %s!", path, strerror(errno));
@@ -106,7 +107,26 @@ bool create_dir(const char *path)
     return true;
 }
 
-int copy_file(const char *from, const char *to)
+int flib_delete_dir(const char *path)
+{
+    DIR *dir = opendir(path);
+    if (dir == NULL){
+        flib_error("Could not find dir '%s'!", path);
+        return 1;
+    }
+    flib_entry entry;
+    while (flib_get_entry(dir, path, &entry)){
+        if (entry.type == FLIB_DIR){
+            flib_delete_dir(entry.path);
+        } else{
+            unlink(entry.path);
+        }
+    }
+    closedir(dir);
+    return rmdir(path);
+}
+
+int flib_copy_file(const char *from, const char *to)
 {
   #ifdef _WIN32
     if (CopyFile(from, to, false) == 0){
@@ -165,7 +185,7 @@ int copy_file(const char *from, const char *to)
     return 1;
 }
 
-int copy_dir_rec(const char *src, const char *dest)
+int flib_copy_dir(const char *src, const char *dest)
 {
     if (!flib_isdir(dest)){
         eprintfn("Not a valid directory: '%s'!", dest);
@@ -185,16 +205,52 @@ int copy_dir_rec(const char *src, const char *dest)
         cwk_path_join(dest, entry->d_name, item_dest_path, FILENAME_MAX);
         switch (entry->d_type){
             case DT_REG:{
-                copy_file(item_src_path, item_dest_path);
+                flib_copy_file(item_src_path, item_dest_path);
             }break;
             case DT_DIR:{
-                if (!create_dir(item_dest_path)) continue;
-                copy_dir_rec(item_src_path, item_dest_path);
+                if (!flib_create_dir(item_dest_path)) continue;
+                flib_copy_dir(item_src_path, item_dest_path);
             }break;
             default: break;
         }
     }
     closedir(dir);
+    return 0;
+}
+
+int flib_copy_dir_ignore(const char *src, const char *dest, const char **ignore, size_t ignore_count)
+{
+    if (!flib_isdir(dest)){
+        eprintfn("Not a valid directory: '%s'!", dest);
+        return 1;
+    }
+    DIR *dir = opendir(src);
+    if (dir == NULL){
+        eprintfn("Not a valid directory: '%s'!", src);
+        return 1;
+    }
+    struct dirent *entry;
+    char item_src_path[FILENAME_MAX] = {0};
+    char item_dest_path[FILENAME_MAX] = {0};
+    while ((entry = readdir(dir)) != NULL){
+        for (size_t i=0; i<ignore_count; ++i){
+            if (strcmp(entry->d_name, ignore[i]) == 0) continue;
+        }
+        cwk_path_join(src, entry->d_name, item_src_path, FILENAME_MAX);
+        cwk_path_join(dest, entry->d_name, item_dest_path, FILENAME_MAX);
+        switch (entry->d_type){
+            case DT_REG:{
+                flib_copy_file(item_src_path, item_dest_path);
+            }break;
+            case DT_DIR:{
+                if (!flib_create_dir(item_dest_path)) continue;
+                flib_copy_dir_ignore(item_src_path, item_dest_path, ignore, ignore_count);
+            }break;
+            default: break;
+        }
+    }
+    closedir(dir);
+    return 0;
 }
 
 fsize_t flib_size(const char *path)
@@ -284,31 +340,33 @@ fsize_t flib_dir_size_rec(DIR *dir, const char *dir_path)
     while ((d_entry = readdir(dir)) != NULL){
         (void)cwk_path_join(dir_path, d_entry->d_name, path, sizeof(path));
         switch (d_entry->d_type){
-            case DT_REG:{
+            case DT_REG: {
                 struct stat attr;
                 if (stat(path, &attr) == -1){
-                    eprintfn("Could not access '%s': %s!", path, strerror(errno));
+                    eprintfn("Could not access file '%s': %s!", path, strerror(errno));
                     continue;
                 }
                 size += attr.st_size;
             } break;
-            case DT_DIR:{
+            case DT_DIR: {
                 DIR *sub_dir = opendir(path);
                 if (sub_dir == NULL){
-                    eprintfn("Could not open sub-dir '%s': %s!", path, strerror(errno));
+                    eprintfn("Could not find dir '%s': %s!", path, strerror(errno));
                     continue;
                 }
                 size += flib_dir_size_rec(sub_dir, path);
+                closedir(sub_dir);
             } break;
         }
     }
+    return size;
 }
 
 void flib_print_entry(flib_entry entry)
 {
     switch(entry.type){
         case FLIB_FILE:{
-            printf("File: '%s' ('%s'): size: %llu", entry.path, entry.name, entry.size);
+            printf("File: '%s' '%s', size: %"PRIu64, entry.path, entry.name, entry.size);
             struct tm *time_info;
             char time_string[20];
             time_info = localtime(&entry.mod_time);
